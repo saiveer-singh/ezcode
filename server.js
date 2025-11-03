@@ -1,327 +1,266 @@
-// server.js - COMPLETE VERSION WITH PROPER FETCH
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
+const axios = require('axios');
+const admin = require('firebase-admin');
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
+
+// Environment variables from Railway
+const FIREBASE_URL = process.env.FIREBASE_URL;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Rate limiting storage
-const rateLimits = new Map();
-
-// Simple rate limiter (20 requests per minute per user)
-function checkRateLimit(userId) {
-  const now = Date.now();
-  const userLimit = rateLimits.get(userId) || {
-    count: 0,
-    resetTime: now + 60000,
-  };
-
-  if (now > userLimit.resetTime) {
-    rateLimits.set(userId, { count: 1, resetTime: now + 60000 });
-    return true;
-  }
-
-  if (userLimit.count >= 20) {
-    return false;
-  }
-
-  userLimit.count++;
-  rateLimits.set(userId, userLimit);
-  return true;
-}
-
-// Check if user has purchased coins using native fetch
-async function checkUserHasPaidCoins(userId) {
-  try {
-    const firebaseUrl = `${process.env.FIREBASE_URL}/users/${userId}.json`;
-    const response = await fetch(firebaseUrl);
-    const data = await response.json();
-
-    // User has paid if coins > 100 (starting amount)
-    return data && data.coins > 100;
-  } catch (error) {
-    console.error('[Tier Check] Error:', error.message);
-    return false;
-  }
-}
-
-// Health check endpoint
+// Health check
 app.get('/', (req, res) => {
-  res.json({
-    status: 'online',
-    message: 'Tissue AI Backend v1.0',
-    endpoints: ['/api/gemini', '/api/generate', '/api/firebase/coins'],
-    tiers: {
-      free: 'GLM-4.6 (via OpenRouter)',
-      paid: 'GPT-5 Nano (via OpenAI)',
-    },
+  res.json({ 
+    status: 'online', 
+    service: 'Tissue AI Backend',
+    version: '2.1'
   });
 });
 
-// Gemini API Proxy (for animations/VFX/UI)
-app.post('/api/gemini', async (req, res) => {
-  try {
-    const { prompt, userId, temperature, maxTokens } = req.body;
-
-    if (!prompt || !userId) {
-      return res.status(400).json({ error: 'Missing prompt or userId' });
-    }
-
-    if (!checkRateLimit(userId)) {
-      return res
-        .status(429)
-        .json({ error: 'Rate limit exceeded. Try again later.' });
-    }
-
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${process.env.GEMINI_API_KEY}`;
-
-    const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: temperature || 0.8,
-        maxOutputTokens: maxTokens || 8192,
-        topP: 0.95,
-      },
-    };
-
-    console.log(`[Gemini] Request from user ${userId}`);
-
-    const response = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      timeout: 30000,
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('[Gemini] Error:', data);
-      return res
-        .status(response.status)
-        .json({ error: data.error?.message || 'Gemini API error' });
-    }
-
-    console.log(`[Gemini] Success for user ${userId}`);
-    res.json(data);
-  } catch (error) {
-    console.error('[Gemini] Exception:', error);
-    res
-      .status(500)
-      .json({
-        error: 'Internal server error',
-        details: error.message,
-      });
-  }
+// Test endpoint
+app.get('/test', (req, res) => {
+  res.json({ 
+    message: 'Backend is working!',
+    firebase: !!FIREBASE_URL,
+    gemini: !!GEMINI_API_KEY,
+    openrouter: !!OPENROUTER_API_KEY
+  });
 });
 
-// Unified AI Generation Endpoint (Scripting - with tier support)
-app.post('/api/generate', async (req, res) => {
+// Generate Animation
+app.post('/api/generate/animation', async (req, res) => {
   try {
-    const { prompt, userId, temperature, maxTokens } = req.body;
+    const { prompt, duration, rigType, systemPrompt } = req.body;
 
-    if (!prompt || !userId) {
-      return res.status(400).json({ error: 'Missing prompt or userId' });
+    if (!prompt || !systemPrompt) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    if (!checkRateLimit(userId)) {
-      return res
-        .status(429)
-        .json({ error: 'Rate limit exceeded. Try again later.' });
-    }
-
-    // Check user tier
-    const hasPaidCoins = await checkUserHasPaidCoins(userId);
-    const tier = hasPaidCoins ? 'paid' : 'free';
-
-    console.log(`[Generate] User ${userId} - Tier: ${tier.toUpperCase()}`);
-
-    let data;
-
-    if (hasPaidCoins) {
-      // PAID TIER: Use OpenAI GPT-5 Nano
-      console.log(`[OpenAI] Calling GPT-5 Nano for user ${userId}`);
-
-      const payload = {
-        model: 'gpt-5-nano',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: temperature || 0.7,
-        max_tokens: maxTokens || 4096,
-      };
-
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        timeout: 30000,
-      });
-
-      data = await response.json();
-
-      if (!response.ok) {
-        console.error('[OpenAI] Error:', data);
-        return res.status(response.status).json({
-          error: data.error?.message || 'OpenAI API error',
-        });
-      }
-
-      data.tier = 'paid';
-      data.model_used = 'gpt-5-nano';
-    } else {
-      // FREE TIER: Use OpenRouter GLM-4.6
-      console.log(`[OpenRouter] Calling GLM-4.6 for user ${userId}`);
-
-      const payload = {
-        model: 'z-ai/glm-4-32b',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: temperature || 0.7,
-        max_tokens: maxTokens || 4096,
-      };
-
-      const response = await fetch(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://github.com/tissue-ai',
-            'X-Title': 'Tissue AI Plugin',
-          },
-          body: JSON.stringify(payload),
-          timeout: 30000,
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{ parts: [{ text: systemPrompt }] }],
+        generationConfig: {
+          temperature: 0.8,
+          maxOutputTokens: 8192,
+          topP: 0.95
         }
-      );
-
-      data = await response.json();
-
-      if (!response.ok) {
-        console.error('[OpenRouter] Error:', data);
-        return res.status(response.status).json({
-          error: data.error?.message || 'OpenRouter API error',
-        });
+      },
+      {
+        headers: { 'Content-Type': 'application/json' }
       }
+    );
 
-      data.tier = 'free';
-      data.model_used = 'z-ai/glm-4-32b';
-    }
-
-    console.log(`[Generate] Success - Model: ${data.model_used}`);
-    res.json(data);
-  } catch (error) {
-    console.error('[Generate] Exception:', error);
-    res
-      .status(500)
-      .json({
-        error: 'Internal server error',
-        details: error.message,
+    if (response.data.candidates && response.data.candidates[0]) {
+      const aiText = response.data.candidates[0].content.parts[0].text;
+      res.json({
+        success: true,
+        data: aiText,
+        usage: response.data.usageMetadata || null
       });
+    } else {
+      res.status(500).json({ error: 'Invalid AI response' });
+    }
+  } catch (error) {
+    console.error('Animation generation error:', error.message);
+    res.status(500).json({ 
+      error: error.response?.data?.error?.message || error.message 
+    });
   }
 });
 
-// Firebase Proxy - Load Coins
-app.get('/api/firebase/coins/:userId', async (req, res) => {
+// Generate VFX
+app.post('/api/generate/vfx', async (req, res) => {
+  try {
+    const { prompt, systemPrompt } = req.body;
+
+    if (!prompt || !systemPrompt) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{ parts: [{ text: systemPrompt }] }],
+        generationConfig: {
+          temperature: 0.8,
+          maxOutputTokens: 8192,
+          topP: 0.95
+        }
+      },
+      {
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+
+    if (response.data.candidates && response.data.candidates[0]) {
+      const aiText = response.data.candidates[0].content.parts[0].text;
+      res.json({
+        success: true,
+        data: aiText,
+        usage: response.data.usageMetadata || null
+      });
+    } else {
+      res.status(500).json({ error: 'Invalid AI response' });
+    }
+  } catch (error) {
+    console.error('VFX generation error:', error.message);
+    res.status(500).json({ 
+      error: error.response?.data?.error?.message || error.message 
+    });
+  }
+});
+
+// Generate Script
+app.post('/api/generate/script', async (req, res) => {
+  try {
+    const { prompt, systemPrompt } = req.body;
+
+    if (!prompt || !systemPrompt) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const response = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'google/gemini-2.0-flash-exp:free',
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.7,
+        max_tokens: 4096
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/tissue-ai',
+          'X-Title': 'Tissue AI Plugin'
+        }
+      }
+    );
+
+    if (response.data.choices && response.data.choices[0]) {
+      const aiText = response.data.choices[0].message.content;
+      res.json({
+        success: true,
+        data: aiText,
+        usage: response.data.usage || null
+      });
+    } else {
+      res.status(500).json({ error: 'Invalid AI response' });
+    }
+  } catch (error) {
+    console.error('Script generation error:', error.message);
+    res.status(500).json({ 
+      error: error.response?.data?.error?.message || error.message 
+    });
+  }
+});
+
+// Generate UI
+app.post('/api/generate/ui', async (req, res) => {
+  try {
+    const { prompt, systemPrompt } = req.body;
+
+    if (!prompt || !systemPrompt) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{ parts: [{ text: systemPrompt }] }],
+        generationConfig: {
+          temperature: 0.8,
+          maxOutputTokens: 8192,
+          topP: 0.95
+        }
+      },
+      {
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+
+    if (response.data.candidates && response.data.candidates[0]) {
+      const aiText = response.data.candidates[0].content.parts[0].text;
+      res.json({
+        success: true,
+        data: aiText,
+        usage: response.data.usageMetadata || null
+      });
+    } else {
+      res.status(500).json({ error: 'Invalid AI response' });
+    }
+  } catch (error) {
+    console.error('UI generation error:', error.message);
+    res.status(500).json({ 
+      error: error.response?.data?.error?.message || error.message 
+    });
+  }
+});
+
+// Firebase - Load Coins
+app.get('/api/coins/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-
-    if (!userId) {
-      return res.status(400).json({ error: 'Missing userId' });
+    
+    const response = await axios.get(`${FIREBASE_URL}/users/${userId}.json`);
+    
+    if (response.data === null || response.data === '') {
+      // New user
+      res.json({ coins: 100, isNew: true });
+    } else {
+      res.json({ coins: response.data.coins || 100, isNew: false });
     }
-
-    const firebaseUrl = `${process.env.FIREBASE_URL}/users/${userId}.json`;
-    console.log(`[Firebase] Loading coins for user ${userId}`);
-
-    const response = await fetch(firebaseUrl, { timeout: 10000 });
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({ error: 'Firebase error' });
-    }
-
-    if (data === null || !data.coins) {
-      return res.json({ coins: 100, isNew: true });
-    }
-
-    res.json({ coins: data.coins, isNew: false });
   } catch (error) {
-    console.error('[Firebase] Load exception:', error.message);
-    res
-      .status(500)
-      .json({
-        error: 'Internal server error',
-        details: error.message,
-      });
+    console.error('Load coins error:', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Firebase Proxy - Save Coins
-app.put('/api/firebase/coins/:userId', async (req, res) => {
+// Firebase - Save Coins
+app.put('/api/coins/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { coins } = req.body;
 
-    if (!userId || coins === undefined) {
-      return res.status(400).json({ error: 'Missing userId or coins' });
+    if (typeof coins !== 'number') {
+      return res.status(400).json({ error: 'Invalid coins value' });
     }
 
-    const firebaseUrl = `${process.env.FIREBASE_URL}/users/${userId}.json`;
-
-    const payload = {
-      coins: coins,
+    const data = {
+      coins,
       lastUpdated: Date.now(),
-      userId: userId,
+      userId: parseInt(userId)
     };
 
-    console.log(`[Firebase] Saving ${coins} coins for user ${userId}`);
+    await axios.put(
+      `${FIREBASE_URL}/users/${userId}.json`,
+      data,
+      { headers: { 'Content-Type': 'application/json' } }
+    );
 
-    const response = await fetch(firebaseUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      timeout: 10000,
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({ error: 'Firebase error' });
-    }
-
-    res.json({ success: true, data });
+    res.json({ success: true, coins });
   } catch (error) {
-    console.error('[Firebase] Save exception:', error.message);
-    res
-      .status(500)
-      .json({
-        error: 'Internal server error',
-        details: error.message,
-      });
+    console.error('Save coins error:', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log('═══════════════════════════════════════');
-  console.log('  🚀 Tissue AI Backend Server');
-  console.log('═══════════════════════════════════════');
-  console.log(`  📡 Server: http://localhost:${PORT}`);
-  console.log('═══════════════════════════════════════');
-  console.log('  🎯 Model Tiers:');
-  console.log('  FREE:  GLM-4.6 (OpenRouter)');
-  console.log('  PAID:  GPT-5 Nano (OpenAI)');
-  console.log('═══════════════════════════════════════');
-  console.log('  Endpoints:');
-  console.log('  • POST /api/gemini (animations/VFX/UI)');
-  console.log('  • POST /api/generate (scripting)');
-  console.log('  • GET  /api/firebase/coins/:userId');
-  console.log('  • PUT  /api/firebase/coins/:userId');
-  console.log('═══════════════════════════════════════');
+  console.log(`╔═══════════════════════════════════════╗`);
+  console.log(`║   TISSUE AI BACKEND SERVER           ║`);
+  console.log(`╚═══════════════════════════════════════╝`);
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Environment check:`);
+  console.log(`  - Firebase URL: ${FIREBASE_URL ? '✓' : '✗'}`);
+  console.log(`  - Gemini API Key: ${GEMINI_API_KEY ? '✓' : '✗'}`);
+  console.log(`  - OpenRouter API Key: ${OPENROUTER_API_KEY ? '✓' : '✗'}`);
 });
