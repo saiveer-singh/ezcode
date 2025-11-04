@@ -1,21 +1,14 @@
 {
   "name": "tissue-ai-backend",
-  "version": "2.1.0",
-  "description": "Backend server for Tissue AI Plugin",
-  "main": "server.js",
-  "type": "module",
+  "version": "3.1.0",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
-  "keywords": ["tissue", "ai", "backend"],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "axios": "^1.6.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
+
