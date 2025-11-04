@@ -1,174 +1,185 @@
-const express = require('express');
-const cors = require('cors');
-const { Pool } = require('pg');
-require('dotenv').config();
+const http = require('http');
+const url = require('url');
 
-const app = express();
 const PORT = process.env.PORT || 3000;
 
-// PostgreSQL connection
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
+// In-memory storage (replace with database later)
+const userCoins = new Map();
+const STARTING_COINS = 100;
 
-// Initialize database table
-async function initDatabase() {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS user_coins (
-        user_id BIGINT PRIMARY KEY,
-        coins INTEGER NOT NULL DEFAULT 100,
-        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    console.log('✅ Database initialized');
-  } catch (error) {
-    console.error('❌ Database init failed:', error);
-  }
+// CORS headers
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Content-Type': 'application/json'
+};
+
+// Helper to send JSON response
+function sendJSON(res, statusCode, data) {
+  res.writeHead(statusCode, corsHeaders);
+  res.end(JSON.stringify(data));
 }
 
-initDatabase();
-
-app.use(cors());
-app.use(express.json());
-
-// Test endpoint
-app.get('/test', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Tissue AI Backend - PostgreSQL Version',
-    timestamp: new Date().toISOString()
+// Helper to parse JSON body
+function parseBody(req, callback) {
+  let body = '';
+  req.on('data', chunk => body += chunk);
+  req.on('end', () => {
+    try {
+      callback(null, JSON.parse(body));
+    } catch (err) {
+      callback(err);
+    }
   });
-});
+}
 
-// Get user coins
-app.get('/api/coins/:userId', async (req, res) => {
-  try {
-    const userId = req.params.userId;
-    
-    const result = await pool.query(
-      'SELECT coins FROM user_coins WHERE user_id = $1',
-      [userId]
-    );
-
-    if (result.rows.length === 0) {
-      // User doesn't exist, create with 100 starting coins
-      await pool.query(
-        'INSERT INTO user_coins (user_id, coins) VALUES ($1, $2)',
-        [userId, 100]
-      );
-      return res.json({ success: true, coins: 100 });
-    }
-
-    res.json({ success: true, coins: result.rows[0].coins });
-  } catch (error) {
-    console.error('Get coins error:', error);
-    res.status(500).json({ success: false, error: error.message });
+const server = http.createServer((req, res) => {
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders);
+    return res.end();
   }
-});
 
-// Update user coins
-app.put('/api/coins/:userId', async (req, res) => {
-  try {
-    const userId = req.params.userId;
-    const { coins } = req.body;
+  const parsedUrl = url.parse(req.url, true);
+  const pathname = parsedUrl.pathname;
+  const method = req.method;
 
-    await pool.query(
-      `INSERT INTO user_coins (user_id, coins, last_updated) 
-       VALUES ($1, $2, CURRENT_TIMESTAMP)
-       ON CONFLICT (user_id) 
-       DO UPDATE SET coins = $2, last_updated = CURRENT_TIMESTAMP`,
-      [userId, coins]
-    );
+  console.log(`${method} ${pathname}`);
 
-    res.json({ success: true, coins });
-  } catch (error) {
-    console.error('Update coins error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Add coins to user
-app.post('/api/coins/:userId/add', async (req, res) => {
-  try {
-    const userId = req.params.userId;
-    const { amount } = req.body;
-
-    const result = await pool.query(
-      `INSERT INTO user_coins (user_id, coins, last_updated) 
-       VALUES ($1, $2, CURRENT_TIMESTAMP)
-       ON CONFLICT (user_id) 
-       DO UPDATE SET 
-         coins = user_coins.coins + $2,
-         last_updated = CURRENT_TIMESTAMP
-       RETURNING coins`,
-      [userId, amount]
-    );
-
-    const newBalance = result.rows[0].coins;
-    console.log(`✅ Added ${amount} coins to User ${userId}. New balance: ${newBalance}`);
-    
-    res.json({ success: true, coins: newBalance });
-  } catch (error) {
-    console.error('Add coins error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// AI Generation endpoints (using OpenAI)
-app.post('/api/generate/:type', async (req, res) => {
-  try {
-    const { type } = req.params;
-    const { prompt, systemPrompt } = req.body;
-
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ 
-        success: false, 
-        error: 'OpenAI API key not configured' 
-      });
-    }
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 2000
-      })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error?.message || 'OpenAI API error');
-    }
-
-    res.json({
+  // Test endpoint
+  if (pathname === '/test' && method === 'GET') {
+    return sendJSON(res, 200, {
       success: true,
-      data: data.choices[0].message.content,
-      usage: data.usage
+      message: 'Tissue AI Backend - Memory Storage',
+      timestamp: new Date().toISOString()
     });
-
-  } catch (error) {
-    console.error('Generation error:', error);
-    res.status(500).json({ success: false, error: error.message });
   }
+
+  // Get user coins
+  if (pathname.startsWith('/api/coins/') && method === 'GET') {
+    const userId = pathname.split('/')[3];
+    
+    if (!userCoins.has(userId)) {
+      userCoins.set(userId, STARTING_COINS);
+    }
+    
+    return sendJSON(res, 200, {
+      success: true,
+      coins: userCoins.get(userId)
+    });
+  }
+
+  // Update user coins
+  if (pathname.startsWith('/api/coins/') && !pathname.endsWith('/add') && method === 'PUT') {
+    const userId = pathname.split('/')[3];
+    
+    parseBody(req, (err, body) => {
+      if (err) {
+        return sendJSON(res, 400, { success: false, error: 'Invalid JSON' });
+      }
+      
+      userCoins.set(userId, body.coins);
+      console.log(`✅ Updated User ${userId}: ${body.coins} coins`);
+      
+      return sendJSON(res, 200, {
+        success: true,
+        coins: body.coins
+      });
+    });
+    return;
+  }
+
+  // Add coins to user
+  if (pathname.endsWith('/add') && method === 'POST') {
+    const userId = pathname.split('/')[3];
+    
+    parseBody(req, (err, body) => {
+      if (err) {
+        return sendJSON(res, 400, { success: false, error: 'Invalid JSON' });
+      }
+      
+      const currentCoins = userCoins.get(userId) || STARTING_COINS;
+      const newCoins = currentCoins + body.amount;
+      userCoins.set(userId, newCoins);
+      
+      console.log(`✅ Added ${body.amount} coins to User ${userId}. New balance: ${newCoins}`);
+      
+      return sendJSON(res, 200, {
+        success: true,
+        coins: newCoins
+      });
+    });
+    return;
+  }
+
+  // AI Generation endpoints
+  if (pathname.startsWith('/api/generate/') && method === 'POST') {
+    const type = pathname.split('/')[3];
+    
+    parseBody(req, async (err, body) => {
+      if (err) {
+        return sendJSON(res, 400, { success: false, error: 'Invalid JSON' });
+      }
+
+      if (!process.env.OPENAI_API_KEY) {
+        return sendJSON(res, 500, {
+          success: false,
+          error: 'OpenAI API key not configured'
+        });
+      }
+
+      try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: 'gpt-4',
+            messages: [
+              { role: 'system', content: body.systemPrompt },
+              { role: 'user', content: body.prompt }
+            ],
+            temperature: 0.7,
+            max_tokens: 2000
+          })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error?.message || 'OpenAI API error');
+        }
+
+        return sendJSON(res, 200, {
+          success: true,
+          data: data.choices[0].message.content,
+          usage: data.usage
+        });
+
+      } catch (error) {
+        console.error('Generation error:', error);
+        return sendJSON(res, 500, {
+          success: false,
+          error: error.message
+        });
+      }
+    });
+    return;
+  }
+
+  // 404
+  sendJSON(res, 404, { success: false, error: 'Not found' });
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log('╔═══════════════════════════════════════╗');
-  console.log('║   TISSUE AI BACKEND - POSTGRESQL      ║');
+  console.log('║   TISSUE AI BACKEND v3.1              ║');
+  console.log('║   Zero Dependencies - Memory Storage  ║');
   console.log('╚═══════════════════════════════════════╝');
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 Database: ${process.env.DATABASE_URL ? 'Connected' : 'Not configured'}`);
-  console.log(`🤖 OpenAI: ${process.env.OPENAI_API_KEY ? 'Configured' : 'Not configured'}`);
+  console.log(`🚀 Server: http://localhost:${PORT}`);
+  console.log(`🤖 OpenAI: ${process.env.OPENAI_API_KEY ? '✅ Configured' : '❌ Not configured'}`);
+  console.log(`💾 Storage: In-Memory (resets on restart)`);
 });
