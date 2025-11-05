@@ -52,6 +52,7 @@ const server = http.createServer((req, res) => {
     return sendJSON(res, 200, {
       success: true,
       message: 'Tissue AI Backend - Memory Storage',
+      model: 'gpt-5-nano',
       timestamp: new Date().toISOString()
     });
   }
@@ -130,6 +131,8 @@ const server = http.createServer((req, res) => {
       }
 
       try {
+        console.log(`🤖 Calling OpenAI API with model: gpt-5-nano`);
+        
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -137,7 +140,7 @@ const server = http.createServer((req, res) => {
             'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
           },
           body: JSON.stringify({
-            model: 'gpt-4',
+            model: 'gpt-5-nano',
             messages: [
               { role: 'system', content: body.systemPrompt },
               { role: 'user', content: body.prompt }
@@ -150,17 +153,21 @@ const server = http.createServer((req, res) => {
         const data = await response.json();
 
         if (!response.ok) {
+          console.error('❌ OpenAI API Error:', data);
           throw new Error(data.error?.message || 'OpenAI API error');
         }
+
+        console.log(`✅ Generation successful - Tokens: ${data.usage?.total_tokens || 'N/A'}`);
 
         return sendJSON(res, 200, {
           success: true,
           data: data.choices[0].message.content,
-          usage: data.usage
+          usage: data.usage,
+          model: 'gpt-5-nano'
         });
 
       } catch (error) {
-        console.error('Generation error:', error);
+        console.error('❌ Generation error:', error);
         return sendJSON(res, 500, {
           success: false,
           error: error.message
@@ -176,10 +183,11 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log('╔═══════════════════════════════════════╗');
-  console.log('║   TISSUE AI BACKEND v3.1              ║');
-  console.log('║   Zero Dependencies - Memory Storage  ║');
+  console.log('║   TISSUE AI BACKEND v3.6              ║');
+  console.log('║   GPT-5 Nano - Memory Storage         ║');
   console.log('╚═══════════════════════════════════════╝');
   console.log(`🚀 Server: http://localhost:${PORT}`);
-  console.log(`🤖 OpenAI: ${process.env.OPENAI_API_KEY ? '✅ Configured' : '❌ Not configured'}`);
+  console.log(`🤖 Model: gpt-5-nano`);
+  console.log(`🔑 OpenAI: ${process.env.OPENAI_API_KEY ? '✅ Configured' : '❌ Not configured'}`);
   console.log(`💾 Storage: In-Memory (resets on restart)`);
 });
