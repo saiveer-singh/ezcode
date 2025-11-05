@@ -145,8 +145,8 @@ const server = http.createServer((req, res) => {
               { role: 'system', content: body.systemPrompt },
               { role: 'user', content: body.prompt }
             ],
-            temperature: 0.7,
-            max_completion_tokens: 2000  // ✅ FIXED: Changed from max_tokens to max_completion_tokens
+            // ✅ REMOVED: temperature (GPT-5 Nano only supports default value of 1)
+            max_completion_tokens: 2000
           })
         });
 
