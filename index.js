@@ -63,10 +63,15 @@ const server = http.createServer((req, res) => {
   }
 
   // Update coins
-  if (pathname.startsWith('/api/coins/') && !pathname.endsWith('/add') && req.method === 'PUT') {
+  if (
+    pathname.startsWith('/api/coins/') &&
+    !pathname.endsWith('/add') &&
+    req.method === 'PUT'
+  ) {
     const userId = pathname.split('/')[3];
     parseBody(req, (err, body) => {
-      if (err) return sendJSON(res, 400, { success: false, error: 'Invalid JSON' });
+      if (err)
+        return sendJSON(res, 400, { success: false, error: 'Invalid JSON' });
       userCoins.set(userId, body.coins);
       return sendJSON(res, 200, { success: true, coins: body.coins });
     });
@@ -77,7 +82,8 @@ const server = http.createServer((req, res) => {
   if (pathname.endsWith('/add') && req.method === 'POST') {
     const userId = pathname.split('/')[3];
     parseBody(req, (err, body) => {
-      if (err) return sendJSON(res, 400, { success: false, error: 'Invalid JSON' });
+      if (err)
+        return sendJSON(res, 400, { success: false, error: 'Invalid JSON' });
       const current = userCoins.get(userId) || STARTING_COINS;
       const newTotal = current + body.amount;
       userCoins.set(userId, newTotal);
@@ -96,23 +102,31 @@ const server = http.createServer((req, res) => {
       }
 
       if (!process.env.OPENAI_API_KEY) {
-        return sendJSON(res, 500, { success: false, error: 'API key missing' });
+        return sendJSON(res, 500, {
+          success: false,
+          error: 'API key missing'
+        });
       }
 
       if (!body.systemPrompt || !body.prompt) {
-        return sendJSON(res, 400, { success: false, error: 'Missing prompts' });
+        return sendJSON(res, 400, {
+          success: false,
+          error: 'Missing prompts'
+        });
       }
 
       try {
-        console.log(`🤖 Type: ${type} | Prompt: ${body.prompt.length}c | System: ${body.systemPrompt.length}c`);
+        console.log(
+          `🤖 Type: ${type} | Prompt: ${body.prompt.length}c | System: ${body.systemPrompt.length}c`
+        );
 
-        // Optimized token limits
+        // INCREASED token limits to prevent truncation
         const maxTokens = {
-          animation: 6000,
-          vfx: 3000,
-          script: 4000,
-          ui: 3500
-        }[type] || 3000;
+          animation: 12000, // Increased from 6000
+          vfx: 5000, // Increased from 3000
+          script: 8000, // Increased from 4000
+          ui: 6000 // Increased from 3500
+        }[type] || 5000;
 
         console.log(`🎯 Max tokens: ${maxTokens}`);
 
@@ -147,40 +161,63 @@ const server = http.createServer((req, res) => {
           console.error(`❌ OpenAI error: ${data.error?.message}`);
           return sendJSON(res, 500, {
             success: false,
-            error: data.error?.message || 'OpenAI error'
+            error: data.error?.message || 'OpenAI error',
+            details: data.error
           });
         }
 
         const content = data.choices?.[0]?.message?.content;
+        const finishReason = data.choices?.[0]?.finish_reason;
 
-        if (!content || content === '') {
-          console.error(`❌ Empty response | Finish: ${data.choices?.[0]?.finish_reason}`);
+        // Enhanced empty response handling
+        if (!content || content.trim() === '') {
+          console.error(
+            `❌ Empty response | Finish: ${finishReason} | Full response:`
+          );
+          console.error(JSON.stringify(data, null, 2));
+
           return sendJSON(res, 500, {
             success: false,
-            error: 'Empty AI response',
-            finish_reason: data.choices?.[0]?.finish_reason
+            error: 'Empty AI response - model may not support this request',
+            finish_reason: finishReason,
+            model_used: 'gpt-5-nano',
+            suggestion:
+              'Try using gpt-4o-mini if gpt-5-nano is not available',
+            raw_response: data
           });
         }
 
-        const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+        const usage = data.usage || {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0
+        };
 
-        console.log(`✅ ${usage.total_tokens}t (${usage.prompt_tokens}+${usage.completion_tokens}) | ${content.length}c`);
+        console.log(
+          `✅ ${usage.total_tokens}t (${usage.prompt_tokens}+${usage.completion_tokens}) | ${content.length}c`
+        );
 
-        if (data.choices[0].finish_reason === 'length') {
-          console.warn('⚠️ Hit token limit!');
+        if (finishReason === 'length') {
+          console.warn(
+            `⚠️ Hit token limit! Response may be incomplete. Consider increasing max_completion_tokens.`
+          );
         }
 
         return sendJSON(res, 200, {
           success: true,
           data: content,
           usage: usage,
-          finish_reason: data.choices[0].finish_reason,
+          finish_reason: finishReason,
           elapsed_seconds: parseFloat(elapsed)
         });
-
       } catch (error) {
         console.error(`❌ ${error.message}`);
-        return sendJSON(res, 500, { success: false, error: error.message });
+        console.error(error.stack);
+        return sendJSON(res, 500, {
+          success: false,
+          error: error.message,
+          stack: error.stack
+        });
       }
     });
     return;
@@ -195,5 +232,7 @@ server.listen(PORT, () => {
   console.log('╚═══════════════════════════════════════╝');
   console.log(`🚀 Port: ${PORT}`);
   console.log(`🤖 Model: gpt-5-nano`);
-  console.log(`⚡ Max: anim=6k, vfx=3k, script=4k, ui=3.5k`);
+  console.log(
+    `⚡ Max: anim=12k, vfx=5k, script=8k, ui=6k`
+  );
 });
