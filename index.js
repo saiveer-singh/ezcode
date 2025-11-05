@@ -153,7 +153,7 @@ const server = http.createServer((req, res) => {
             { role: 'system', content: body.systemPrompt },
             { role: 'user', content: body.prompt }
           ],
-          max_completion_tokens: 2000
+          max_completion_tokens: 10000
         };
 
         console.log('📤 Sending to OpenAI...');
