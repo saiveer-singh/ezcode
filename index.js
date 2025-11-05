@@ -18,7 +18,9 @@ const corsHeaders = {
 // Helper to send JSON response
 function sendJSON(res, statusCode, data) {
   res.writeHead(statusCode, corsHeaders);
-  res.end(JSON.stringify(data));
+  const jsonString = JSON.stringify(data);
+  console.log(`📤 Sending response (${jsonString.length} bytes):`, jsonString.substring(0, 200));
+  res.end(jsonString);
 }
 
 // Helper to parse JSON body
@@ -120,18 +122,41 @@ const server = http.createServer((req, res) => {
     
     parseBody(req, async (err, body) => {
       if (err) {
+        console.error('❌ Body parse error:', err);
         return sendJSON(res, 400, { success: false, error: 'Invalid JSON' });
       }
 
       if (!process.env.OPENAI_API_KEY) {
+        console.error('❌ OpenAI API key not configured');
         return sendJSON(res, 500, {
           success: false,
           error: 'OpenAI API key not configured'
         });
       }
 
+      if (!body.systemPrompt || !body.prompt) {
+        console.error('❌ Missing systemPrompt or prompt');
+        return sendJSON(res, 400, {
+          success: false,
+          error: 'Missing systemPrompt or prompt'
+        });
+      }
+
       try {
         console.log(`🤖 Calling OpenAI API with model: gpt-5-nano`);
+        console.log(`📝 User prompt length: ${body.prompt.length}`);
+        console.log(`📝 System prompt length: ${body.systemPrompt.length}`);
+        
+        const requestBody = {
+          model: 'gpt-5-nano',
+          messages: [
+            { role: 'system', content: body.systemPrompt },
+            { role: 'user', content: body.prompt }
+          ],
+          max_completion_tokens: 2000
+        };
+
+        console.log('📤 Sending to OpenAI...');
         
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
@@ -139,38 +164,75 @@ const server = http.createServer((req, res) => {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
           },
-          body: JSON.stringify({
-            model: 'gpt-5-nano',
-            messages: [
-              { role: 'system', content: body.systemPrompt },
-              { role: 'user', content: body.prompt }
-            ],
-            // ✅ REMOVED: temperature (GPT-5 Nano only supports default value of 1)
-            max_completion_tokens: 2000
-          })
+          body: JSON.stringify(requestBody)
         });
 
         const data = await response.json();
 
+        console.log('📥 OpenAI response status:', response.status);
+        console.log('📥 OpenAI response keys:', Object.keys(data).join(', '));
+
         if (!response.ok) {
-          console.error('❌ OpenAI API Error:', data);
-          throw new Error(data.error?.message || 'OpenAI API error');
+          console.error('❌ OpenAI API Error:', JSON.stringify(data, null, 2));
+          return sendJSON(res, 500, {
+            success: false,
+            error: data.error?.message || 'OpenAI API error',
+            details: data
+          });
         }
 
-        console.log(`✅ Generation successful - Tokens: ${data.usage?.total_tokens || 'N/A'}`);
+        // Validate response structure
+        if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+          console.error('❌ Invalid response structure - no choices array');
+          console.error('Full response:', JSON.stringify(data, null, 2));
+          return sendJSON(res, 500, {
+            success: false,
+            error: 'Invalid API response structure - no choices',
+            debug: data
+          });
+        }
+
+        if (!data.choices[0].message) {
+          console.error('❌ Invalid response structure - no message');
+          console.error('Full response:', JSON.stringify(data, null, 2));
+          return sendJSON(res, 500, {
+            success: false,
+            error: 'Invalid API response structure - no message',
+            debug: data
+          });
+        }
+
+        const content = data.choices[0].message.content;
+
+        if (!content || content.trim() === '') {
+          console.error('❌ Empty content from OpenAI');
+          console.error('Full response:', JSON.stringify(data, null, 2));
+          return sendJSON(res, 500, {
+            success: false,
+            error: 'OpenAI returned empty content',
+            debug: data
+          });
+        }
+
+        console.log(`✅ Generation successful`);
+        console.log(`📊 Tokens: ${data.usage?.total_tokens || 'N/A'}`);
+        console.log(`📊 Content length: ${content.length} characters`);
+        console.log(`📝 Content preview: ${content.substring(0, 100)}...`);
 
         return sendJSON(res, 200, {
           success: true,
-          data: data.choices[0].message.content,
-          usage: data.usage,
+          data: content,
+          usage: data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
           model: 'gpt-5-nano'
         });
 
       } catch (error) {
         console.error('❌ Generation error:', error);
+        console.error('Stack:', error.stack);
         return sendJSON(res, 500, {
           success: false,
-          error: error.message
+          error: error.message,
+          stack: error.stack
         });
       }
     });
@@ -183,7 +245,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log('╔═══════════════════════════════════════╗');
-  console.log('║   TISSUE AI BACKEND v3.6              ║');
+  console.log('║   TISSUE AI BACKEND v3.7              ║');
   console.log('║   GPT-5 Nano - Memory Storage         ║');
   console.log('╚═══════════════════════════════════════╝');
   console.log(`🚀 Server: http://localhost:${PORT}`);
