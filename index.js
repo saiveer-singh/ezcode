@@ -30,6 +30,56 @@ const MODEL_CONFIG = {
       'X-Title': 'Tissue AI Plugin'
     },
     supportsJsonSchema: false
+  },
+  'anthropic/claude-3.5-sonnet': {
+    provider: 'openrouter',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    apiKey: () => process.env.OPENROUTER_API_KEY,
+    headers: {
+      'HTTP-Referer': 'https://tissue-ai-plugin',
+      'X-Title': 'Tissue AI Plugin'
+    },
+    supportsJsonSchema: false
+  },
+  'google/gemini-pro-1.5': {
+    provider: 'openrouter',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    apiKey: () => process.env.OPENROUTER_API_KEY,
+    headers: {
+      'HTTP-Referer': 'https://tissue-ai-plugin',
+      'X-Title': 'Tissue AI Plugin'
+    },
+    supportsJsonSchema: false
+  },
+  'openai/gpt-4-turbo': {
+    provider: 'openrouter',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    apiKey: () => process.env.OPENROUTER_API_KEY,
+    headers: {
+      'HTTP-Referer': 'https://tissue-ai-plugin',
+      'X-Title': 'Tissue AI Plugin'
+    },
+    supportsJsonSchema: false
+  },
+  'meta-llama/llama-3.1-70b-instruct': {
+    provider: 'openrouter',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    apiKey: () => process.env.OPENROUTER_API_KEY,
+    headers: {
+      'HTTP-Referer': 'https://tissue-ai-plugin',
+      'X-Title': 'Tissue AI Plugin'
+    },
+    supportsJsonSchema: false
+  },
+  'mistralai/mistral-large': {
+    provider: 'openrouter',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    apiKey: () => process.env.OPENROUTER_API_KEY,
+    headers: {
+      'HTTP-Referer': 'https://tissue-ai-plugin',
+      'X-Title': 'Tissue AI Plugin'
+    },
+    supportsJsonSchema: false
   }
 };
 
