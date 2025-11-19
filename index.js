@@ -13,6 +13,35 @@ const corsHeaders = {
   'Content-Type': 'application/json'
 };
 
+const MODEL_CONFIG = {
+  'gpt-5.1': {
+    provider: 'openai',
+    endpoint: 'https://api.openai.com/v1/chat/completions',
+    apiKey: () => process.env.OPENAI_API_KEY,
+    headers: {}
+  },
+  'moonshotai/kimi-k2-thinking': {
+    provider: 'openrouter',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    apiKey: () => process.env.OPENROUTER_API_KEY,
+    headers: {
+      'HTTP-Referer': 'https://tissue-ai-plugin',
+      'X-Title': 'Tissue AI Plugin'
+    }
+  }
+};
+
+function getModelConfig(modelName) {
+  const config = MODEL_CONFIG[modelName];
+  if (!config) return null;
+  const apiKey = config.apiKey();
+  if (!apiKey) return null;
+  return {
+    ...config,
+    apiKey
+  };
+}
+
 function sendJSON(res, statusCode, data) {
   res.writeHead(statusCode, corsHeaders);
   res.end(JSON.stringify(data));
@@ -416,10 +445,19 @@ const server = http.createServer((req, res) => {
       const duration = body.duration || 1.0;
       const keyframes = body.keyframes || 5;
       const isAnimation = type === 'animation';
+      const requestedModel = body.model || 'gpt-5.1';
+      const modelConfig = getModelConfig(requestedModel);
+
+      if (!modelConfig) {
+        return sendJSON(res, 400, {
+          success: false,
+          error: `Model '${requestedModel}' is not configured or missing API key`
+        });
+      }
 
       try {
         console.log('════════════════════════════════════════');
-        console.log(`🤖 Generation Request (v7.0 - GPT-5.1)`);
+        console.log(`🤖 Generation Request (v7.0 - ${requestedModel})`);
         console.log(`   Type: ${type}, Rig: ${rigType}`);
         console.log(`   Duration: ${duration}s, ${keyframes} keyframes`);
 
@@ -435,11 +473,10 @@ const server = http.createServer((req, res) => {
 
         const start = Date.now();
 
-        // PRIMARY: GPT-5.1
-        console.log(`🚀 Calling gpt-5.1...`);
+        console.log(`🚀 Calling ${requestedModel}...`);
         
         const requestPayload = {
-          model: 'gpt-5.1',
+          model: requestedModel,
           messages: [
             { role: 'system', content: body.systemPrompt },
             { role: 'user', content: userPrompt }
@@ -460,14 +497,17 @@ const server = http.createServer((req, res) => {
           };
         }
 
+        const headers = {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${modelConfig.apiKey}`,
+          ...modelConfig.headers
+        };
+
         const response = await fetch(
-          'https://api.openai.com/v1/chat/completions',
+          modelConfig.endpoint,
           {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-            },
+            headers,
             body: JSON.stringify(requestPayload)
           }
         );
@@ -475,10 +515,10 @@ const server = http.createServer((req, res) => {
         const data = await response.json();
         const elapsed = ((Date.now() - start) / 1000).toFixed(2);
 
-        console.log(`⏱️  GPT-5.1 completed in ${elapsed}s`);
+        console.log(`⏱️  ${requestedModel} completed in ${elapsed}s`);
 
         if (!response.ok) {
-          console.error('❌ GPT-5.1 failed:', data.error?.message);
+          console.error(`❌ ${requestedModel} failed:`, data.error?.message);
           return sendJSON(res, 500, {
             success: false,
             error: data.error?.message || 'OpenAI API error',
@@ -488,7 +528,7 @@ const server = http.createServer((req, res) => {
 
         let content = data.choices?.[0]?.message?.content;
         let usage = data.usage;
-        let model = 'gpt-5.1';
+        let model = requestedModel;
 
         // VALIDATE
         if (isAnimation) {
