@@ -35,15 +35,18 @@ function parseBody(req, callback) {
 // ========================================
 const R15_ANIMATION_SCHEMA = {
   type: "object",
+  additionalProperties: false,
   properties: {
     keyframes: {
       type: "array",
       items: {
         type: "object",
+        additionalProperties: false,
         properties: {
           time: { type: "number", minimum: 0 },
           parts: {
             type: "object",
+            additionalProperties: false,
             properties: {
               Root: { $ref: "#/$defs/joint" },
               Waist: { $ref: "#/$defs/joint" },
@@ -78,6 +81,7 @@ const R15_ANIMATION_SCHEMA = {
   $defs: {
     joint: {
       type: "object",
+      additionalProperties: false,
       properties: {
         rot: {
           type: "array",
@@ -93,15 +97,18 @@ const R15_ANIMATION_SCHEMA = {
 
 const R6_ANIMATION_SCHEMA = {
   type: "object",
+  additionalProperties: false,
   properties: {
     keyframes: {
       type: "array",
       items: {
         type: "object",
+        additionalProperties: false,
         properties: {
           time: { type: "number", minimum: 0 },
           parts: {
             type: "object",
+            additionalProperties: false,
             properties: {
               Torso: { $ref: "#/$defs/joint" },
               Head: { $ref: "#/$defs/joint" },
@@ -121,6 +128,7 @@ const R6_ANIMATION_SCHEMA = {
   $defs: {
     joint: {
       type: "object",
+      additionalProperties: false,
       properties: {
         rot: {
           type: "array",
