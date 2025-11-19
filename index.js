@@ -407,6 +407,7 @@ const server = http.createServer((req, res) => {
       const rigType = body.rigType || 'r15';
       const duration = body.duration || 1.0;
       const keyframes = body.keyframes || 5;
+      const isAnimation = type === 'animation';
 
       try {
         console.log('════════════════════════════════════════');
@@ -414,8 +415,12 @@ const server = http.createServer((req, res) => {
         console.log(`   Type: ${type}, Rig: ${rigType}`);
         console.log(`   Duration: ${duration}s, ${keyframes} keyframes`);
 
-        const schema = rigType === 'r15' ? R15_ANIMATION_SCHEMA : R6_ANIMATION_SCHEMA;
-        const userPrompt = generateSmartPrompt(body.prompt, rigType, duration, keyframes);
+        const schema = isAnimation
+          ? (rigType === 'r15' ? R15_ANIMATION_SCHEMA : R6_ANIMATION_SCHEMA)
+          : null;
+        const userPrompt = isAnimation
+          ? generateSmartPrompt(body.prompt, rigType, duration, keyframes)
+          : body.prompt;
 
         console.log(`📋 System Prompt: ${body.systemPrompt.length} chars`);
         console.log(`📋 User Prompt: ${userPrompt.length} chars`);
@@ -425,6 +430,28 @@ const server = http.createServer((req, res) => {
         // PRIMARY: GPT-5.1
         console.log(`🚀 Calling gpt-5.1...`);
         
+        const requestPayload = {
+          model: 'gpt-5.1',
+          messages: [
+            { role: 'system', content: body.systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_completion_tokens: 2000,
+          reasoning_effort: 'low',
+          seed: 42
+        };
+
+        if (schema) {
+          requestPayload.response_format = {
+            type: 'json_schema',
+            json_schema: {
+              name: 'animation',
+              schema: schema,
+              strict: true
+            }
+          };
+        }
+
         const response = await fetch(
           'https://api.openai.com/v1/chat/completions',
           {
@@ -433,24 +460,7 @@ const server = http.createServer((req, res) => {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
             },
-            body: JSON.stringify({
-              model: 'gpt-5.1',
-              messages: [
-                { role: 'system', content: body.systemPrompt },
-                { role: 'user', content: userPrompt }
-              ],
-              max_completion_tokens: 2000,
-              response_format: {
-                type: 'json_schema',
-                json_schema: {
-                  name: 'animation',
-                  schema: schema,
-                  strict: true
-                }
-              },
-              reasoning_effort: 'low',
-              seed: 42
-            })
+            body: JSON.stringify(requestPayload)
           }
         );
 
@@ -473,31 +483,33 @@ const server = http.createServer((req, res) => {
         let model = 'gpt-5.1';
 
         // VALIDATE
-        const validation = validateAnimation(content, rigType);
-        if (!validation.valid) {
-          console.warn(`⚠️  GPT-5.1 validation failed: ${validation.error}`);
-          
-          try {
-            const retryResult = await retryWithMini(userPrompt, rigType, duration, keyframes, process.env.OPENAI_API_KEY);
-            content = retryResult.content;
-            usage = retryResult.usage;
-            model = retryResult.model;
+        if (isAnimation) {
+          const validation = validateAnimation(content, rigType);
+          if (!validation.valid) {
+            console.warn(`⚠️  GPT-5.1 validation failed: ${validation.error}`);
             
-            const revalidation = validateAnimation(content, rigType);
-            if (!revalidation.valid) {
-              console.error(`❌ Retry also failed: ${revalidation.error}`);
+            try {
+              const retryResult = await retryWithMini(userPrompt, rigType, duration, keyframes, process.env.OPENAI_API_KEY);
+              content = retryResult.content;
+              usage = retryResult.usage;
+              model = retryResult.model;
+              
+              const revalidation = validateAnimation(content, rigType);
+              if (!revalidation.valid) {
+                console.error(`❌ Retry also failed: ${revalidation.error}`);
+                return sendJSON(res, 500, {
+                  success: false,
+                  error: 'GPT-5.1 failed validation',
+                  validation_error: revalidation.error
+                });
+              }
+            } catch (retryErr) {
+              console.error('❌ Retry error:', retryErr.message);
               return sendJSON(res, 500, {
                 success: false,
-                error: 'GPT-5.1 failed validation',
-                validation_error: revalidation.error
+                error: 'Retry failed: ' + retryErr.message
               });
             }
-          } catch (retryErr) {
-            console.error('❌ Retry error:', retryErr.message);
-            return sendJSON(res, 500, {
-              success: false,
-              error: 'Retry failed: ' + retryErr.message
-            });
           }
         }
 
