@@ -18,7 +18,8 @@ const MODEL_CONFIG = {
     provider: 'openai',
     endpoint: 'https://api.openai.com/v1/chat/completions',
     apiKey: () => process.env.OPENAI_API_KEY,
-    headers: {}
+    headers: {},
+    supportsJsonSchema: true
   },
   'moonshotai/kimi-k2-thinking': {
     provider: 'openrouter',
@@ -27,7 +28,8 @@ const MODEL_CONFIG = {
     headers: {
       'HTTP-Referer': 'https://tissue-ai-plugin',
       'X-Title': 'Tissue AI Plugin'
-    }
+    },
+    supportsJsonSchema: false
   }
 };
 
@@ -187,16 +189,23 @@ Output: {"keyframes":[{"time":0.0,"parts":{"Torso":{"rot":[0,0,0]},"Head":{"rot"
 // ========================================
 // MINIMAL SMART PROMPT GENERATION
 // ========================================
-function generateSmartPrompt(description, rigType, duration, keyframes) {
+function generateSmartPrompt(description, rigType, duration, keyframes, requiresJsonPrompt = false) {
   const example = rigType === 'r15' ? ANIMATION_EXAMPLES.r15_wave : ANIMATION_EXAMPLES.r6_wave;
   
-  return `${example}
+  let prompt = `${example}
 
 GENERATE ${rigType.toUpperCase()} ANIMATION:
 - Duration: ${duration}s
 - Keyframes: ${keyframes}
-- Action: ${description}
-- Output: VALID JSON ONLY`;
+- Action: ${description}`;
+  
+  if (requiresJsonPrompt) {
+    prompt += `\n\nCRITICAL: Output ONLY valid JSON. No markdown, no code blocks, no explanations. Start with { and end with }. Ensure ALL keyframes have ALL required parts.`;
+  } else {
+    prompt += `\n- Output: VALID JSON ONLY`;
+  }
+  
+  return prompt;
 }
 
 // ========================================
@@ -461,11 +470,11 @@ const server = http.createServer((req, res) => {
         console.log(`   Type: ${type}, Rig: ${rigType}`);
         console.log(`   Duration: ${duration}s, ${keyframes} keyframes`);
 
-        const schema = isAnimation
+        const schema = isAnimation && modelConfig.supportsJsonSchema
           ? (rigType === 'r15' ? R15_ANIMATION_SCHEMA : R6_ANIMATION_SCHEMA)
           : null;
         const userPrompt = isAnimation
-          ? generateSmartPrompt(body.prompt, rigType, duration, keyframes)
+          ? generateSmartPrompt(body.prompt, rigType, duration, keyframes, !modelConfig.supportsJsonSchema)
           : body.prompt;
 
         console.log(`📋 System Prompt: ${body.systemPrompt.length} chars`);
@@ -530,32 +539,91 @@ const server = http.createServer((req, res) => {
         let usage = data.usage;
         let model = requestedModel;
 
+        // For OpenRouter models, extract JSON from markdown code blocks if present
+        if (!modelConfig.supportsJsonSchema && content) {
+          const jsonMatch = content.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/) || content.match(/(\{[\s\S]*\})/);
+          if (jsonMatch) {
+            content = jsonMatch[1];
+            console.log('📝 Extracted JSON from OpenRouter response');
+          }
+        }
+
         // VALIDATE
         if (isAnimation) {
           const validation = validateAnimation(content, rigType);
           if (!validation.valid) {
-            console.warn(`⚠️  GPT-5.1 validation failed: ${validation.error}`);
+            console.warn(`⚠️  ${requestedModel} validation failed: ${validation.error}`);
             
-            try {
-              const retryResult = await retryWithMini(userPrompt, rigType, duration, keyframes, process.env.OPENAI_API_KEY);
-              content = retryResult.content;
-              usage = retryResult.usage;
-              model = retryResult.model;
-              
-              const revalidation = validateAnimation(content, rigType);
-              if (!revalidation.valid) {
-                console.error(`❌ Retry also failed: ${revalidation.error}`);
+            // Only retry with OpenAI if the original model wasn't OpenAI
+            if (modelConfig.provider !== 'openai') {
+              console.log('   🔄 Retrying with gpt-5.1 (OpenAI supports JSON schema)...');
+              try {
+                const retryConfig = getModelConfig('gpt-5.1');
+                if (retryConfig) {
+                  const retrySchema = rigType === 'r15' ? R15_ANIMATION_SCHEMA : R6_ANIMATION_SCHEMA;
+                  const retryPrompt = generateSmartPrompt(body.prompt, rigType, duration, keyframes, false);
+                  
+                  const retryPayload = {
+                    model: 'gpt-5.1',
+                    messages: [
+                      { role: 'system', content: body.systemPrompt },
+                      { role: 'user', content: retryPrompt }
+                    ],
+                    max_completion_tokens: 2000,
+                    response_format: {
+                      type: 'json_schema',
+                      json_schema: {
+                        name: 'animation',
+                        schema: retrySchema,
+                        strict: true
+                      }
+                    },
+                    reasoning_effort: 'low',
+                    seed: 42
+                  };
+                  
+                  const retryResponse = await fetch(retryConfig.endpoint, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${retryConfig.apiKey}`
+                    },
+                    body: JSON.stringify(retryPayload)
+                  });
+                  
+                  const retryData = await retryResponse.json();
+                  if (retryResponse.ok && retryData.choices?.[0]?.message?.content) {
+                    content = retryData.choices[0].message.content;
+                    usage = retryData.usage;
+                    model = 'gpt-5.1';
+                    
+                    const revalidation = validateAnimation(content, rigType);
+                    if (!revalidation.valid) {
+                      console.error(`❌ Retry also failed: ${revalidation.error}`);
+                      return sendJSON(res, 500, {
+                        success: false,
+                        error: 'Both models failed validation',
+                        validation_error: revalidation.error
+                      });
+                    }
+                    console.log('✅ Retry with gpt-5.1 succeeded');
+                  } else {
+                    throw new Error(retryData.error?.message || 'Retry request failed');
+                  }
+                } else {
+                  throw new Error('gpt-5.1 not configured');
+                }
+              } catch (retryErr) {
+                console.error('❌ Retry error:', retryErr.message);
                 return sendJSON(res, 500, {
                   success: false,
-                  error: 'GPT-5.1 failed validation',
-                  validation_error: revalidation.error
+                  error: 'Retry failed: ' + retryErr.message
                 });
               }
-            } catch (retryErr) {
-              console.error('❌ Retry error:', retryErr.message);
+            } else {
               return sendJSON(res, 500, {
                 success: false,
-                error: 'Retry failed: ' + retryErr.message
+                error: 'Validation failed: ' + validation.error
               });
             }
           }
