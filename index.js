@@ -21,6 +21,13 @@ const MODEL_CONFIG = {
     headers: {},
     supportsJsonSchema: true
   },
+  'gpt-5.1-thinking': {
+    provider: 'openai',
+    endpoint: 'https://api.openai.com/v1/chat/completions',
+    apiKey: () => process.env.OPENAI_API_KEY,
+    headers: {},
+    supportsJsonSchema: true
+  },
   'moonshotai/kimi-k2-thinking': {
     provider: 'openrouter',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
@@ -29,9 +36,10 @@ const MODEL_CONFIG = {
       'HTTP-Referer': 'https://tissue-ai-plugin',
       'X-Title': 'Tissue AI Plugin'
     },
-    supportsJsonSchema: false
+    supportsJsonSchema: false,
+    openrouterModel: 'moonshotai/kimi-k2-thinking'
   },
-  'anthropic/claude-3.5-sonnet': {
+  'moonshotai/kimi-k2-thinking-turbo': {
     provider: 'openrouter',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
     apiKey: () => process.env.OPENROUTER_API_KEY,
@@ -39,9 +47,10 @@ const MODEL_CONFIG = {
       'HTTP-Referer': 'https://tissue-ai-plugin',
       'X-Title': 'Tissue AI Plugin'
     },
-    supportsJsonSchema: false
+    supportsJsonSchema: false,
+    openrouterModel: 'moonshotai/kimi-k2-thinking-turbo'
   },
-  'google/gemini-pro-1.5': {
+  'anthropic/claude-sonnet-4.5': {
     provider: 'openrouter',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
     apiKey: () => process.env.OPENROUTER_API_KEY,
@@ -49,9 +58,10 @@ const MODEL_CONFIG = {
       'HTTP-Referer': 'https://tissue-ai-plugin',
       'X-Title': 'Tissue AI Plugin'
     },
-    supportsJsonSchema: false
+    supportsJsonSchema: false,
+    openrouterModel: 'anthropic/claude-sonnet-4.5'
   },
-  'openai/gpt-4-turbo': {
+  'anthropic/claude-sonnet-4.5-reasoning': {
     provider: 'openrouter',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
     apiKey: () => process.env.OPENROUTER_API_KEY,
@@ -59,9 +69,10 @@ const MODEL_CONFIG = {
       'HTTP-Referer': 'https://tissue-ai-plugin',
       'X-Title': 'Tissue AI Plugin'
     },
-    supportsJsonSchema: false
+    supportsJsonSchema: false,
+    openrouterModel: 'anthropic/claude-sonnet-4.5-reasoning'
   },
-  'meta-llama/llama-3.1-70b-instruct': {
+  'x-ai/grok-code-fast-1': {
     provider: 'openrouter',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
     apiKey: () => process.env.OPENROUTER_API_KEY,
@@ -69,17 +80,8 @@ const MODEL_CONFIG = {
       'HTTP-Referer': 'https://tissue-ai-plugin',
       'X-Title': 'Tissue AI Plugin'
     },
-    supportsJsonSchema: false
-  },
-  'mistralai/mistral-large': {
-    provider: 'openrouter',
-    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
-    apiKey: () => process.env.OPENROUTER_API_KEY,
-    headers: {
-      'HTTP-Referer': 'https://tissue-ai-plugin',
-      'X-Title': 'Tissue AI Plugin'
-    },
-    supportsJsonSchema: false
+    supportsJsonSchema: false,
+    openrouterModel: 'x-ai/grok-code-fast-1'
   }
 };
 
@@ -534,8 +536,11 @@ const server = http.createServer((req, res) => {
 
         console.log(`🚀 Calling ${requestedModel}...`);
         
+        // Use openrouterModel if available, otherwise use requestedModel
+        const modelName = modelConfig.openrouterModel || requestedModel;
+        
         const requestPayload = {
-          model: requestedModel,
+          model: modelName,
           messages: [
             { role: 'system', content: body.systemPrompt },
             { role: 'user', content: userPrompt }
